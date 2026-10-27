@@ -9,10 +9,11 @@
   <meta name="theme-color" content="#d97706">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Family%20Recipe%20Organizer%22%2C%22short_name%22%3A%22Chef%20Neko%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23fffbeb%22%2C%22theme_color%22%3A%22%23d97706%22%2C%22description%22%3A%22Save%20recipes%2C%20scale%20servings%2C%20and%20plan%20weekly%20menus%20with%20AI.%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%253Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20512%20512%27%253E%253Crect%20width%3D%27512%27%20height%3D%27512%27%20fill%3D%27%2523f59e0b%27%2F%253E%253Ctext%20x%3D%2750%2525%27%20y%3D%2750%2525%27%20dominant-baseline%3D%27middle%27%20text-anchor%3D%27middle%27%20font-size%3D%27256%27%253E%F0%9F%90%BE%253C%2Ftext%253E%253C%2Fsvg%253E%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
   
-  <!-- Dynamically injected Tailwind CSS to bypass static SRI scanners -->
- <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
+  <!-- Tailwind CSS (Play CDN) -->
+ <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Inter', sans-serif; }
@@ -38,7 +39,7 @@
         padding: 0 !important;
         margin: 0 !important;
       }
-      #app-header, #nav-tabs, #view-cookbook, #view-mealprep, #view-shopping,
+      #app-header, #nav-tabs, #view-cookbook, #view-fusion, #view-mealprep, #view-shopping,
       #cook-modal, #meal-picker-modal, #confirm-modal, #feedback-message,
       .no-print {
         display: none !important;
@@ -325,7 +326,7 @@
               <span class="text-xl">🌟</span>
               <div>
                 <div class="text-xs font-bold text-stone-900 leading-tight">Gemini</div>
-                <div class="text-[10px] text-stone-500 leading-tight">1.5 Flash / Pro</div>
+                <div class="text-[10px] text-stone-500 leading-tight">2.5 Flash / Pro</div>
               </div>
             </button>
 
@@ -341,7 +342,7 @@
               <span class="text-xl">🟣</span>
               <div>
                 <div class="text-xs font-bold text-stone-900 leading-tight">Claude</div>
-                <div class="text-[10px] text-stone-500 leading-tight">3.5 Haiku / Sonnet</div>
+                <div class="text-[10px] text-stone-500 leading-tight">Haiku / Sonnet 5.5</div>
               </div>
             </button>
 
@@ -1659,6 +1660,20 @@
       return STARTER_RECIPES.map(ensureRecipeDefaults);
     }
 
+    // Returns the number if it is a real finite value (0 is valid), otherwise the fallback
+    function finiteOr(v, fallback) {
+      if (v === null || v === undefined || v === '') return fallback;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    // Collision-safe integer IDs (Date.now() alone can repeat within a millisecond)
+    let _idCounter = 0;
+    function uniqueId() {
+      _idCounter = (_idCounter + 1) % 1000;
+      return Date.now() * 1000 + _idCounter;
+    }
+
     function ensureRecipeDefaults(r) {
       const baseServings = Number(r.servings) || 2;
       let nut = r.nutrition;
@@ -1670,10 +1685,10 @@
         servings: baseServings,
         currentServings: Number(r.currentServings) || baseServings,
         nutrition: {
-          calories: Number(nut.calories) || 400,
-          protein: Number(nut.protein) || 25,
-          carbs: Number(nut.carbs) || 45,
-          fat: Number(nut.fat) || 12
+          calories: finiteOr(nut.calories, 400),
+          protein: finiteOr(nut.protein, 25),
+          carbs: finiteOr(nut.carbs, 45),
+          fat: finiteOr(nut.fat, 12)
         },
         isFavorite: Boolean(r.isFavorite)
       };
@@ -1724,12 +1739,23 @@
 
     // Load Meal Plan (DAYS and MEAL_SLOTS hoisted above)
 
+    // Guarantees every weekday has an object with all four meal slots
+    function normalizeMealPlan(plan) {
+      const out = {};
+      DAYS.forEach(day => {
+        const d = plan && typeof plan[day] === 'object' && plan[day] ? plan[day] : {};
+        out[day] = {};
+        MEAL_SLOTS.forEach(slot => { out[day][slot] = d[slot] || null; });
+      });
+      return out;
+    }
+
     function loadMealPlanFromStorage() {
       try {
         const stored = localStorage.getItem(STORAGE_KEY_MEALPLAN);
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (parsed && typeof parsed === 'object') return parsed;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return normalizeMealPlan(parsed);
         }
       } catch (err) {
         // removed console log
@@ -1781,25 +1807,28 @@
       let cal = 0, pro = 0, carb = 0, fat = 0;
       const text = (Array.isArray(ingredients) ? ingredients.join(' ') : String(ingredients)).toLowerCase();
 
+      // Whole-word matcher so "rice" doesn't match "licorice"/"price", "egg" doesn't match "eggplant", "oil" doesn't match "boil"
+      const has = (...words) => words.some(w => new RegExp('\\b' + w + '\\b').test(text));
+
       // Protein checks
-      if (text.includes('chicken cutlet') || text.includes('fried chicken')) { cal += 350; pro += 30; fat += 16; carb += 15; }
-      else if (text.includes('chicken') || text.includes('turkey')) { cal += 240; pro += 36; fat += 6; }
-      if (text.includes('salmon') || text.includes('tuna') || text.includes('fish')) { cal += 280; pro += 34; fat += 12; }
-      if (text.includes('egg') || text.includes('eggs')) { cal += 150; pro += 12; fat += 10; }
-      if (text.includes('beef') || text.includes('steak') || text.includes('pork')) { cal += 320; pro += 28; fat += 20; }
-      if (text.includes('tofu')) { cal += 140; pro += 16; fat += 8; carb += 4; }
+      if (has('chicken cutlets?', 'fried chicken')) { cal += 350; pro += 30; fat += 16; carb += 15; }
+      else if (has('chicken', 'turkey')) { cal += 240; pro += 36; fat += 6; }
+      if (has('salmon', 'tuna', 'fish')) { cal += 280; pro += 34; fat += 12; }
+      if (has('eggs?')) { cal += 150; pro += 12; fat += 10; }
+      if (has('beef', 'steak', 'pork')) { cal += 320; pro += 28; fat += 20; }
+      if (has('tofu')) { cal += 140; pro += 16; fat += 8; carb += 4; }
 
       // Carb checks
-      if (text.includes('curry roux')) { cal += 180; carb += 20; fat += 12; }
-      if (text.includes('rice')) { cal += 240; carb += 52; pro += 4; }
-      if (text.includes('pasta') || text.includes('noodle')) { cal += 260; carb += 50; pro += 8; }
-      if (text.includes('potato') || text.includes('potatoes')) { cal += 160; carb += 36; pro += 4; }
-      if (text.includes('flour') || text.includes('mochiko') || text.includes('bread')) { cal += 200; carb += 44; pro += 5; }
-      if (text.includes('sugar') || text.includes('honey') || text.includes('syrup')) { cal += 120; carb += 30; }
+      if (has('curry roux')) { cal += 180; carb += 20; fat += 12; }
+      if (has('rice')) { cal += 240; carb += 52; pro += 4; }
+      if (has('pasta', 'noodles?')) { cal += 260; carb += 50; pro += 8; }
+      if (has('potato', 'potatoes')) { cal += 160; carb += 36; pro += 4; }
+      if (has('flour', 'mochiko', 'bread')) { cal += 200; carb += 44; pro += 5; }
+      if (has('sugar', 'honey', 'syrup')) { cal += 120; carb += 30; }
 
       // Fat / Dairy checks
-      if (text.includes('butter') || text.includes('oil')) { cal += 150; fat += 17; }
-      if (text.includes('milk') || text.includes('cream') || text.includes('cheese')) { cal += 120; pro += 6; fat += 8; carb += 6; }
+      if (has('butter', 'oil')) { cal += 150; fat += 17; }
+      if (has('milk', 'cream', 'cheese')) { cal += 120; pro += 6; fat += 8; carb += 6; }
 
       // Base minimums
       if (cal === 0) cal = 300;
@@ -2457,7 +2486,7 @@
         }
 
         const newRecipe = {
-          id: Date.now(),
+          id: uniqueId(),
           title: title,
           category: category,
           isFavorite: isFav,
@@ -2496,12 +2525,11 @@
         keyPlaceholder: "AIzaSy...",
         keyLabel: "Google Gemini API Key",
         keyLink: "https://aistudio.google.com/app/apikey",
-        defaultModel: "gemini-1.5-flash",
+        defaultModel: "gemini-2.5-flash",
         models: [
-          { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash (Recommended & Fast)" },
-          { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash (Next-Gen Fast)" },
-          { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro (Deep Reasoning)" },
-          { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash-Lite (Lightweight)" }
+          { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash (Recommended & Fast)" },
+          { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro (Deep Reasoning)" },
+          { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite (Lightweight)" }
         ]
       },
       openai: {
@@ -2527,11 +2555,10 @@
         keyPlaceholder: "sk-ant-...",
         keyLabel: "Anthropic Claude API Key",
         keyLink: "https://console.anthropic.com/settings/keys",
-        defaultModel: "claude-3-5-haiku-latest",
+        defaultModel: "claude-haiku-5-5",
         models: [
-          { id: "claude-3-5-haiku-latest", name: "Claude 3.5 Haiku (Fast & Precise)" },
-          { id: "claude-3-5-sonnet-latest", name: "Claude 3.5 Sonnet (Nuanced Flavor)" },
-          { id: "claude-3-haiku-20240307", name: "Claude 3 Haiku (Stable)" }
+          { id: "claude-haiku-5-5", name: "Claude Haiku 5.5 (Fast & Precise)" },
+          { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (Nuanced Flavor)" }
         ]
       },
       groq: {
@@ -2545,8 +2572,7 @@
         defaultModel: "llama-3.3-70b-versatile",
         models: [
           { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B (Ultra-Fast)" },
-          { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B Instant" },
-          { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B" }
+          { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B Instant" }
         ]
       },
       openrouter: {
@@ -2562,8 +2588,7 @@
           { id: "deepseek/deepseek-chat", name: "DeepSeek V3 (Top Quality)" },
           { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B Instruct" },
           { id: "anthropic/claude-3.5-haiku", name: "Claude 3.5 Haiku" },
-          { id: "google/gemini-2.0-flash-001", name: "Gemini 2.0 Flash" },
-          { id: "google/gemini-flash-1.5", name: "Gemini 1.5 Flash" }
+          { id: "google/gemini-2.0-flash-001", name: "Gemini 2.0 Flash" }
         ]
       },
       custom: {
@@ -2613,18 +2638,18 @@
         const stored = localStorage.getItem(STORAGE_KEY_AI_MODELS);
         if (stored) models = JSON.parse(stored) || {};
       } catch (e) {}
-      // Automatically migrate deprecated legacy or hallucinated gemini model strings to working models
-      if (models.gemini && (!models.gemini.startsWith('gemini-') || /^gemini-3/.test(models.gemini))) {
-        models.gemini = 'gemini-1.5-flash';
-        try {
-          localStorage.setItem(STORAGE_KEY_AI_MODELS, JSON.stringify(models));
-        } catch (e) {}
+      // Migrate retired model IDs saved by earlier versions
+      let migrated = false;
+      if (models.gemini && (!models.gemini.startsWith('gemini-') || /^gemini-(1\.5|3)/.test(models.gemini))) {
+        models.gemini = 'gemini-2.5-flash';
+        migrated = true;
       }
-      if (models.claude && /claude-(?:haiku|sonnet)-5-5/.test(models.claude)) {
-        models.claude = 'claude-3-5-haiku-latest';
-        try {
-          localStorage.setItem(STORAGE_KEY_AI_MODELS, JSON.stringify(models));
-        } catch (e) {}
+      if (models.claude && /^claude-3/.test(models.claude)) {
+        models.claude = 'claude-haiku-5-5';
+        migrated = true;
+      }
+      if (migrated) {
+        try { localStorage.setItem(STORAGE_KEY_AI_MODELS, JSON.stringify(models)); } catch (e) {}
       }
       return models;
     }
@@ -3002,7 +3027,7 @@
             showToast(`${provider.name} API key saved securely in browser! 🔑`);
             if (statusBox) {
               statusBox.className = 'text-xs p-3 rounded-xl border bg-emerald-50 border-emerald-200 text-emerald-800 block';
-              safeSetHTML(statusBox, `🔑 <strong>Key Saved:</strong> ${provider.name} key stored securely in local browser storage. Click <strong>Test ⚡</strong> to verify connection anytime!`);
+              safeSetHTML(statusBox, `🔑 <strong>Key Saved:</strong> ${provider.name} key stored in this browser's localStorage (unencrypted). Click <strong>Test ⚡</strong> to verify connection anytime!`);
             }
           } else {
             delete storedAIKeys[activeAIProvider];
@@ -3432,22 +3457,22 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
     // Helper: Dynamically discover and resolve working Gemini model for an API key
     async function resolveGeminiModel(cleanKey, preferredModel, signal) {
       const MODERN_GEMINI_PRIORITY = [
-        'gemini-1.5-flash',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
         'gemini-2.0-flash',
-        'gemini-1.5-flash-8b',
-        'gemini-1.5-pro',
-        'gemini-2.0-flash-lite'
+        'gemini-2.5-pro'
       ];
 
-      const target = (preferredModel && !/^gemini-3/.test(preferredModel)) ? preferredModel : "gemini-1.5-flash";
+      const target = preferredModel || "gemini-2.5-flash";
 
       // 1. Try querying models.list endpoint from Google Generative Language API
       let discoveredList = [];
       try {
-        const listEndpoint = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cleanKey)}`;
+        const listEndpoint = `https://generativelanguage.googleapis.com/v1beta/models`;
         const listRes = await fetch(listEndpoint, {
           method: 'GET',
           headers: {
+              'x-goog-api-key': cleanKey,
             'Content-Type': 'application/json'
           },
           signal
@@ -3482,10 +3507,11 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
       let otherError = null;
       for (const cand of candidateList) {
         try {
-          const testEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cand)}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+          const testEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cand)}:generateContent`;
           const testRes = await fetch(testEndpoint, {
             method: 'POST',
             headers: {
+              'x-goog-api-key': cleanKey,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -3544,10 +3570,11 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
             }
           }
 
-          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(actualModel)}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(actualModel)}:generateContent`;
           const res = await fetch(endpoint, {
             method: 'POST',
             headers: {
+              'x-goog-api-key': cleanKey,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -3592,8 +3619,7 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
         if (providerId === 'claude') {
           if (!cleanKey) throw new Error("Please enter an Anthropic Claude API key first.");
           const endpoint = `https://api.anthropic.com/v1/messages`;
-          let actualClaudeModel = targetModel || "claude-3-5-haiku-latest";
-          if (/claude-(?:haiku|sonnet)-5-5/.test(actualClaudeModel)) actualClaudeModel = "claude-3-5-haiku-latest";
+          let actualClaudeModel = targetModel || "claude-haiku-5-5";
           const res = await fetch(endpoint, {
             method: 'POST',
             headers: {
@@ -3689,9 +3715,8 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
     // 1. Google Gemini
     async function callLiveGeminiAPI(promptText, model, apiKey) {
       const cleanKey = sanitizeApiKey(apiKey);
-      let targetModel = model || storedAIModels['gemini'] || "gemini-1.5-flash";
-      if (/^gemini-3/.test(targetModel)) targetModel = "gemini-1.5-flash";
-      let endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+      let targetModel = model || storedAIModels['gemini'] || "gemini-2.5-flash";
+      let endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent`;
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 25000);
@@ -3705,6 +3730,7 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
         let response = await fetch(endpoint, {
           method: 'POST',
           headers: {
+              'x-goog-api-key': cleanKey,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(requestBody),
@@ -3732,10 +3758,11 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
             try {
               localStorage.setItem(STORAGE_KEY_AI_MODELS, JSON.stringify(storedAIModels));
             } catch (e) {}
-            endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+            endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(targetModel)}:generateContent`;
             response = await fetch(endpoint, {
               method: 'POST',
               headers: {
+              'x-goog-api-key': cleanKey,
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify(requestBody),
@@ -3800,8 +3827,7 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
     // 3. Anthropic Claude (3.5 Haiku, 3.5 Sonnet)
     async function callClaudeAPI(promptText, model, apiKey) {
       const cleanKey = sanitizeApiKey(apiKey);
-      let targetModel = model || "claude-3-5-haiku-latest";
-      if (/claude-(?:haiku|sonnet)-5-5/.test(targetModel)) targetModel = "claude-3-5-haiku-latest";
+      let targetModel = model || "claude-haiku-5-5";
       const endpoint = `https://api.anthropic.com/v1/messages`;
       
       const controller = new AbortController();
@@ -4327,7 +4353,7 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
       recipe.ingredients.forEach(ing => {
         const scaled = scaleIngredientText(ing, scale);
         shoppingList.push({
-          id: Date.now() + Math.random(),
+          id: uniqueId(),
           name: scaled,
           category: detectCategory(scaled),
           completed: false,
@@ -4421,7 +4447,7 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
         if (!val) return;
         const cat = shoppingCatSelect ? shoppingCatSelect.value : "Other";
         shoppingList.push({
-          id: Date.now() + Math.random(),
+          id: uniqueId(),
           name: val,
           category: cat,
           completed: false,
@@ -4794,7 +4820,7 @@ You MUST respond ONLY with a raw, valid JSON object strictly matching this schem
             if (r) {
               r.ingredients.forEach(ing => {
                 shoppingList.push({
-                  id: Date.now() + Math.random(),
+                  id: uniqueId(),
                   name: ing,
                   category: detectCategory(ing),
                   completed: false,
@@ -5644,7 +5670,7 @@ You MUST respond ONLY with a raw, valid JSON object matching this schema:
       if (saveBtn) {
         saveBtn.addEventListener('click', () => {
           const newRecipe = {
-            id: Date.now(),
+            id: uniqueId(),
             title: fusion.title,
             category: fusion.category || "Dinner",
             isFavorite: true,
@@ -5671,7 +5697,7 @@ You MUST respond ONLY with a raw, valid JSON object matching this schema:
           if (Array.isArray(fusion.ingredients)) {
             fusion.ingredients.forEach(ing => {
               shoppingList.push({
-                id: Date.now() + Math.random(),
+                id: uniqueId(),
                 name: ing,
                 category: detectCategory(ing),
                 completed: false,
@@ -5762,38 +5788,9 @@ You MUST respond ONLY with a raw, valid JSON object matching this schema:
       showToast("App installed successfully! 📱");
     });
 
-    // Register a Single-File Blob Service Worker for caching & offline support
-    if ('serviceWorker' in navigator) {
-      const swCode = `
-        const CACHE_NAME = 'chef-neko-cache-v1';
-        self.addEventListener('install', event => {
-          self.skipWaiting();
-        });
-        self.addEventListener('activate', event => {
-          event.waitUntil(self.clients.claim());
-        });
-        self.addEventListener('fetch', event => {
-          if (event.request.method !== 'GET') return;
-          event.respondWith(
-            fetch(event.request)
-              .then(response => {
-                const clone = response.clone();
-                caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-                return response;
-              })
-              .catch(() => caches.match(event.request))
-          );
-        });
-      `;
-      try {
-        const blob = new Blob([swCode], { type: 'application/javascript' });
-        const swUrl = URL.createObjectURL(blob);
-        navigator.serviceWorker.register(swUrl)
-          .then(reg => { /* removed console log */ })
-          .catch(err => { /* removed console log */ });
-      } catch (e) {
-        // removed console log
-      }
+    // Offline caching: needs a real sw.js served over http(s) (blob: URLs are rejected by browsers)
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
     }
   </script>
 </body>
